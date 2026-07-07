@@ -27,6 +27,7 @@ type Config struct {
 	CongestionConfig CongestionConfig
 	BandwidthConfig  BandwidthConfig
 	FastOpen         bool
+	Cascade          string // JSON encoded list of subsequent nodes for cascading
 
 	filled bool // whether the fields have been verified and filled
 }
@@ -73,6 +74,11 @@ func (c *Config) verifyAndFill() error {
 	} else if c.QUICConfig.KeepAlivePeriod < 2*time.Second || c.QUICConfig.KeepAlivePeriod > 60*time.Second {
 		return errors.ConfigError{Field: "QUICConfig.KeepAlivePeriod", Reason: "must be between 2s and 60s"}
 	}
+	if c.QUICConfig.HandshakeIdleTimeout == 0 {
+		c.QUICConfig.HandshakeIdleTimeout = 20 * time.Second
+	} else if c.QUICConfig.HandshakeIdleTimeout < 2*time.Second || c.QUICConfig.HandshakeIdleTimeout > 120*time.Second {
+		return errors.ConfigError{Field: "QUICConfig.HandshakeIdleTimeout", Reason: "must be between 2s and 120s"}
+	}
 	c.QUICConfig.DisablePathMTUDiscovery = c.QUICConfig.DisablePathMTUDiscovery || pmtud.DisablePathMTUDiscovery
 	var err error
 	c.CongestionConfig.Type, err = congestion.NormalizeType(c.CongestionConfig.Type)
@@ -118,6 +124,7 @@ type QUICConfig struct {
 	MaxIdleTimeout                 time.Duration
 	KeepAlivePeriod                time.Duration
 	DisablePathMTUDiscovery        bool // The server may still override this to true on unsupported platforms.
+	HandshakeIdleTimeout           time.Duration
 }
 
 type CongestionConfig struct {

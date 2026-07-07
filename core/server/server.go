@@ -56,6 +56,7 @@ func NewServer(config *Config) (Server, error) {
 		MaxIdleTimeout:                 config.QUICConfig.MaxIdleTimeout,
 		MaxIncomingStreams:             config.QUICConfig.MaxIncomingStreams,
 		DisablePathMTUDiscovery:        config.QUICConfig.DisablePathMTUDiscovery,
+		HandshakeIdleTimeout:           config.QUICConfig.HandshakeIdleTimeout,
 		EnableDatagrams:                true,
 		MaxDatagramFrameSize:           protocol.MaxDatagramFrameSize,
 		AssumePeerMaxDatagramFrameSize: protocol.MaxDatagramFrameSize,
@@ -129,14 +130,17 @@ type h3sHandler struct {
 	authID        string
 	connID        uint32 // a random id for dump streams
 
+	outbound Outbound // Per-connection outbound, defaults to config.Outbound but can be overridden by cascade
+
 	udpSM *udpSessionManager // Only set after authentication
 }
 
 func newH3sHandler(config *Config, conn *quic.Conn) *h3sHandler {
 	return &h3sHandler{
-		config: config,
-		conn:   conn,
-		connID: rand.Uint32(),
+		config:   config,
+		conn:     conn,
+		connID:   rand.Uint32(),
+		outbound: config.Outbound,
 	}
 }
 
@@ -158,6 +162,16 @@ func (h *h3sHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		actualTx := authReq.Rx
 		ok, id := h.config.Authenticator.Authenticate(h.conn.RemoteAddr(), authReq.Auth, actualTx)
 		if ok {
+			if authReq.Cascade != "" {
+				cascadeOut, err := createCascadeOutbound(authReq.Cascade, h.config)
+				if err != nil {
+					w.Header().Set(protocol.ResponseHeaderCascadeError, err.Error())
+					w.WriteHeader(http.StatusBadGateway)
+					return
+				}
+				h.outbound = cascadeOut
+			}
+
 			// Set authenticated flag
 			h.authenticated = true
 			h.authID = id
@@ -199,7 +213,7 @@ func (h *h3sHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !h.config.DisableUDP {
 				go func() {
 					sm := newUDPSessionManager(
-						&udpIOImpl{h.conn, id, h.config.TrafficLogger, h.config.RequestHook, h.config.Outbound},
+						&udpIOImpl{h.conn, id, h.config.TrafficLogger, h.config.RequestHook, h.outbound},
 						&udpEventLoggerImpl{h.conn, id, h.config.EventLogger},
 						h.config.UDPIdleTimeout,
 					)
@@ -287,7 +301,7 @@ func (h *h3sHandler) handleTCPRequest(stream *utils.QStream) {
 	}
 	// Dial target
 	streamStats.State.Store(StreamStateConnecting)
-	tConn, err := h.config.Outbound.TCP(reqAddr)
+	tConn, err := h.outbound.TCP(reqAddr)
 	if err != nil {
 		if !hooked {
 			_ = protocol.WriteTCPResponse(stream, false, err.Error())

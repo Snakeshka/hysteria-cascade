@@ -78,6 +78,11 @@ func (c *Config) fill() error {
 	} else if c.QUICConfig.MaxIncomingStreams < 8 {
 		return errors.ConfigError{Field: "QUICConfig.MaxIncomingStreams", Reason: "must be at least 8"}
 	}
+	if c.QUICConfig.HandshakeIdleTimeout == 0 {
+		c.QUICConfig.HandshakeIdleTimeout = 20 * time.Second
+	} else if c.QUICConfig.HandshakeIdleTimeout < 2*time.Second || c.QUICConfig.HandshakeIdleTimeout > 120*time.Second {
+		return errors.ConfigError{Field: "QUICConfig.HandshakeIdleTimeout", Reason: "must be between 2s and 120s"}
+	}
 	c.QUICConfig.DisablePathMTUDiscovery = c.QUICConfig.DisablePathMTUDiscovery || pmtud.DisablePathMTUDiscovery
 	var err error
 	c.CongestionConfig.Type, err = congestion.NormalizeType(c.CongestionConfig.Type)
@@ -129,6 +134,7 @@ type QUICConfig struct {
 	MaxIdleTimeout                 time.Duration
 	MaxIncomingStreams             int64
 	DisablePathMTUDiscovery        bool // The server may still override this to true on unsupported platforms.
+	HandshakeIdleTimeout           time.Duration
 }
 
 type CongestionConfig struct {

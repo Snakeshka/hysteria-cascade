@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -86,6 +87,7 @@ func (c *clientImpl) connect() (*HandshakeInfo, error) {
 		MaxIdleTimeout:                 c.config.QUICConfig.MaxIdleTimeout,
 		KeepAlivePeriod:                c.config.QUICConfig.KeepAlivePeriod,
 		DisablePathMTUDiscovery:        c.config.QUICConfig.DisablePathMTUDiscovery,
+		HandshakeIdleTimeout:           c.config.QUICConfig.HandshakeIdleTimeout,
 		EnableDatagrams:                true,
 		MaxDatagramFrameSize:           protocol.MaxDatagramFrameSize,
 		OmitMaxDatagramFrameSize:       true,
@@ -117,8 +119,9 @@ func (c *clientImpl) connect() (*HandshakeInfo, error) {
 		Header: make(http.Header),
 	}
 	protocol.AuthRequestToHeader(req.Header, protocol.AuthRequest{
-		Auth: c.config.Auth,
-		Rx:   c.config.BandwidthConfig.MaxRx,
+		Auth:    c.config.Auth,
+		Rx:      c.config.BandwidthConfig.MaxRx,
+		Cascade: c.config.Cascade,
 	})
 	resp, err := rt.RoundTrip(req)
 	if err != nil {
@@ -133,6 +136,10 @@ func (c *clientImpl) connect() (*HandshakeInfo, error) {
 		_ = conn.CloseWithError(closeErrCodeProtocolError, "")
 		_ = tr.Close()
 		_ = pktConn.Close()
+		errMsg := resp.Header.Get(protocol.ResponseHeaderCascadeError)
+		if errMsg != "" {
+			return nil, fmt.Errorf("cascade error: %s (status %d)", errMsg, resp.StatusCode)
+		}
 		return nil, coreErrs.AuthError{StatusCode: resp.StatusCode}
 	}
 	// Auth OK

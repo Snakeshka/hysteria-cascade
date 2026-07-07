@@ -9,18 +9,21 @@ const (
 	URLHost = "hysteria"
 	URLPath = "/auth"
 
-	RequestHeaderAuth        = "Hysteria-Auth"
-	ResponseHeaderUDPEnabled = "Hysteria-UDP"
-	CommonHeaderCCRX         = "Hysteria-CC-RX"
-	CommonHeaderPadding      = "Hysteria-Padding"
+	RequestHeaderAuth          = "Hysteria-Auth"
+	RequestHeaderCascade       = "Hysteria-Cascade"
+	ResponseHeaderUDPEnabled   = "Hysteria-UDP"
+	ResponseHeaderCascadeError = "Hysteria-Cascade-Error"
+	CommonHeaderCCRX           = "Hysteria-CC-RX"
+	CommonHeaderPadding        = "Hysteria-Padding"
 
 	StatusAuthOK = 233
 )
 
 // AuthRequest is what client sends to server for authentication.
 type AuthRequest struct {
-	Auth string
-	Rx   uint64 // 0 = unknown, client asks server to use bandwidth detection
+	Auth    string
+	Rx      uint64 // 0 = unknown, client asks server to use bandwidth detection
+	Cascade string // JSON encoded list of subsequent nodes for cascading
 }
 
 // AuthResponse is what server sends to client when authentication is passed.
@@ -33,8 +36,9 @@ type AuthResponse struct {
 func AuthRequestFromHeader(h http.Header) AuthRequest {
 	rx, _ := strconv.ParseUint(h.Get(CommonHeaderCCRX), 10, 64)
 	return AuthRequest{
-		Auth: h.Get(RequestHeaderAuth),
-		Rx:   rx,
+		Auth:    h.Get(RequestHeaderAuth),
+		Rx:      rx,
+		Cascade: h.Get(RequestHeaderCascade),
 	}
 }
 
@@ -42,6 +46,9 @@ func AuthRequestToHeader(h http.Header, req AuthRequest) {
 	h.Set(RequestHeaderAuth, req.Auth)
 	h.Set(CommonHeaderCCRX, strconv.FormatUint(req.Rx, 10))
 	h.Set(CommonHeaderPadding, authRequestPadding.String())
+	if req.Cascade != "" {
+		h.Set(RequestHeaderCascade, req.Cascade)
+	}
 }
 
 func AuthResponseFromHeader(h http.Header) AuthResponse {

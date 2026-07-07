@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -87,8 +88,23 @@ type clientConfig struct {
 	UDPForwarding []udpForwardingEntry   `mapstructure:"udpForwarding"`
 	TCPTProxy     *tcpTProxyConfig       `mapstructure:"tcpTProxy"`
 	UDPTProxy     *udpTProxyConfig       `mapstructure:"udpTProxy"`
-	TCPRedirect   *tcpRedirectConfig     `mapstructure:"tcpRedirect"`
-	TUN           *tunConfig             `mapstructure:"tun"`
+	TCPRedirect   *tcpRedirectConfig        `mapstructure:"tcpRedirect"`
+	TUN           *tunConfig                `mapstructure:"tun"`
+	Cascade       []clientConfigCascadeNode `mapstructure:"cascade"`
+}
+
+type clientConfigCascadeNode struct {
+	Server    string                      `json:"server" mapstructure:"server"`
+	Auth      string                      `json:"auth" mapstructure:"auth"`
+	TLS       *clientConfigCascadeNodeTLS `json:"tls,omitempty" mapstructure:"tls"`
+	Bandwidth *clientConfigBandwidth      `json:"-" mapstructure:"bandwidth"`
+	Tx        uint64                      `json:"tx,omitempty" mapstructure:"-"`
+	Rx        uint64                      `json:"rx,omitempty" mapstructure:"-"`
+}
+
+type clientConfigCascadeNodeTLS struct {
+	SNI      string `json:"sni,omitempty" mapstructure:"sni"`
+	Insecure bool   `json:"insecure,omitempty" mapstructure:"insecure"`
 }
 
 type clientConfigRealm struct {
@@ -455,6 +471,37 @@ func (c *clientConfig) fillBandwidthConfig(hyConfig *client.Config) error {
 	return nil
 }
 
+func (c *clientConfig) fillCascade(hyConfig *client.Config) error {
+	if len(c.Cascade) == 0 {
+		return nil
+	}
+	for i := range c.Cascade {
+		node := &c.Cascade[i]
+		if node.Bandwidth != nil {
+			if node.Bandwidth.Up != "" {
+				tx, err := utils.ConvBandwidth(node.Bandwidth.Up)
+				if err != nil {
+					return configError{Field: "cascade.bandwidth.up", Err: err}
+				}
+				node.Tx = tx
+			}
+			if node.Bandwidth.Down != "" {
+				rx, err := utils.ConvBandwidth(node.Bandwidth.Down)
+				if err != nil {
+					return configError{Field: "cascade.bandwidth.down", Err: err}
+				}
+				node.Rx = rx
+			}
+		}
+	}
+	b, err := json.Marshal(c.Cascade)
+	if err != nil {
+		return configError{Field: "cascade", Err: err}
+	}
+	hyConfig.Cascade = string(b)
+	return nil
+}
+
 func (c *clientConfig) fillCongestionConfig(hyConfig *client.Config) error {
 	normalizedType, err := normalizeCongestionType(c.Congestion.Type)
 	if err != nil {
@@ -589,6 +636,7 @@ func (c *clientConfig) Config() (*client.Config, error) {
 		c.fillCongestionConfig,
 		c.fillBandwidthConfig,
 		c.fillFastOpen,
+		c.fillCascade,
 	}
 	for _, f := range fillers {
 		if err := f(hyConfig); err != nil {
@@ -622,6 +670,7 @@ func (c *clientConfig) realmConfig(addr *realm.Addr) (*client.Config, error) {
 		c.fillCongestionConfig,
 		c.fillBandwidthConfig,
 		c.fillFastOpen,
+		c.fillCascade,
 	}
 	for _, f := range fillers {
 		if err := f(hyConfig); err != nil {
